@@ -149,6 +149,12 @@ func (p *Pipeline) liveStep(ctx context.Context, lag time.Duration) error {
 		if !ok {
 			return nil // no logs yet
 		}
+		// Fresh watermark means a fresh (or reseeded) dataset: stale baselines
+		// from a previous dataset would mass-flag benign activity as new-origin
+		// logins, so start the behavioural state from zero too.
+		if err := p.Baselines.Reset(ctx); err != nil {
+			return err
+		}
 		next = min.Truncate(p.Step)
 	}
 	for {

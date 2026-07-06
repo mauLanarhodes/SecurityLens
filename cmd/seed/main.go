@@ -9,6 +9,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"securitylens/internal/config"
 	"securitylens/internal/gen"
 	"securitylens/internal/store"
@@ -35,6 +37,13 @@ func main() {
 	if err := st.ResetAll(ctx); err != nil {
 		log.Fatalf("reset: %v", err)
 	}
+	// Redis holds only state derived from the dataset (baselines, LLM cache);
+	// a reseed must clear it or the old dataset's baselines poison detection.
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	if err := rdb.FlushDB(ctx).Err(); err != nil {
+		log.Printf("warning: could not flush redis (%v); restart the backend after seeding", err)
+	}
+	rdb.Close()
 	t1 := time.Now()
 	const chunk = 20000
 	var loaded int64

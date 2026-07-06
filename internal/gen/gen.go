@@ -108,7 +108,10 @@ func Generate(p Params) Dataset {
 		p.Days = 5
 	}
 	if p.Start.IsZero() {
-		p.Start = time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -p.Days)
+		// Anchor the dataset end near "now" so the live feed has fresh events
+		// arriving right after seeding (late-timezone activity extends a few
+		// hours past now and streams in as wall-clock time advances).
+		p.Start = time.Now().UTC().Add(-time.Duration(p.Days) * 24 * time.Hour).Truncate(time.Minute)
 	}
 	g := &generator{r: rand.New(rand.NewSource(p.Seed)), p: p, usedIP: map[string]bool{}}
 	g.makeFleet()
