@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+/* Dark SOC theme — deliberately single-mode. Palette values are the validated
+   dark-mode steps from the reference data-viz palette. */
+:root {
+  --surface-1: #1a1a19;
+  --page: #0d0d0d;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --ink-muted: #898781;
+  --grid: #2c2c2a;
+  --baseline: #383835;
+  --ring: rgba(255, 255, 255, 0.1);
+
+  --series-1: #3987e5; /* blue */
+  --series-2: #199e70; /* aqua */
+  --series-3: #c98500; /* yellow */
+  --series-4: #008300; /* green */
+  --series-5: #9085e9; /* violet */
+  --series-6: #e66767; /* red */
+  --series-7: #d55181; /* magenta */
+
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+}
+
+html,
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--ring);
+  border-radius: 0.5rem;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--baseline);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
