@@ -1,8 +1,8 @@
 {
   "dataset": "20k_seed1",
-  "logs": 20026,
-  "windows": 2055,
-  "drain_seconds": 2.409694749,
+  "logs": 20025,
+  "windows": 2058,
+  "drain_seconds": 1.4498301630000001,
   "per_type": {
     "credential_stuffing": {
       "attacks": 3,

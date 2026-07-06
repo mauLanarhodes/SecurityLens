@@ -41,7 +41,9 @@ func main() {
 	if cfg.SeedOnStart {
 		if n, err := st.CountLogs(ctx); err == nil && n == 0 {
 			log.Printf("seeding synthetic dataset: %d logs / %d days / seed %d", cfg.SeedLogs, cfg.SeedDays, cfg.SeedSeed)
-			ds := gen.Generate(gen.Params{Logs: cfg.SeedLogs, Days: cfg.SeedDays, Seed: cfg.SeedSeed})
+			// AnchorNow so the live feed has fresh events streaming right after
+			// boot; the evaluator seeds without it for reproducibility.
+			ds := gen.Generate(gen.Params{Logs: cfg.SeedLogs, Days: cfg.SeedDays, Seed: cfg.SeedSeed, AnchorNow: true})
 			const chunk = 20000
 			for i := 0; i < len(ds.Events); i += chunk {
 				j := min(i+chunk, len(ds.Events))

@@ -27,10 +27,11 @@ import (
 )
 
 type Params struct {
-	Logs  int       // approximate total events
-	Days  int       // dataset span in days (minimum 5)
-	Seed  int64     // RNG seed; same seed = same dataset shape
-	Start time.Time // UTC midnight of day 0; zero value = Days ago from now
+	Logs      int       // approximate total events
+	Days      int       // dataset span in days (minimum 5)
+	Seed      int64     // RNG seed; same seed = same dataset shape
+	Start     time.Time // day-0 anchor; zero value = a fixed epoch (reproducible)
+	AnchorNow bool      // shift the span to end near now (live feed; non-reproducible)
 }
 
 type Dataset struct {
@@ -108,10 +109,16 @@ func Generate(p Params) Dataset {
 		p.Days = 5
 	}
 	if p.Start.IsZero() {
-		// Anchor the dataset end near "now" so the live feed has fresh events
-		// arriving right after seeding (late-timezone activity extends a few
-		// hours past now and streams in as wall-clock time advances).
-		p.Start = time.Now().UTC().Add(-time.Duration(p.Days) * 24 * time.Hour).Truncate(time.Minute)
+		// Deterministic by default: a fixed epoch anchor makes seeded datasets
+		// (and therefore eval results) reproducible independent of wall-clock
+		// time. AnchorNow shifts the span so the dataset ends near "now",
+		// which the live server uses to keep the feed fresh — at the cost of
+		// reproducibility, so it is never used for evaluation.
+		if p.AnchorNow {
+			p.Start = time.Now().UTC().Add(-time.Duration(p.Days) * 24 * time.Hour).Truncate(time.Minute)
+		} else {
+			p.Start = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -p.Days)
+		}
 	}
 	g := &generator{r: rand.New(rand.NewSource(p.Seed)), p: p, usedIP: map[string]bool{}}
 	g.makeFleet()
@@ -203,7 +210,12 @@ func (g *generator) forcedBaseline() int {
 			} else {
 				g.emit(g.consoleLogin(u, g.localTS(u, day, u.workStart+1, g.r.Intn(30), g.r.Intn(60)), u.homeIP, true), "", "")
 			}
-			for h := u.workStart; h <= u.workEnd; h++ {
+			// Warm the hour histogram across the work band plus one hour either
+			// side and the two evening-shoulder hours benign activity can reach.
+			// This also covers the fractional-UTC-hour boundaries that half-hour
+			// timezones (e.g. +5:30) introduce, so a benign shoulder or
+			// boundary-hour event never trips the off-hours dead-band check.
+			for h := u.workStart - 1; h <= u.workEnd+2; h++ {
 				g.emit(g.apiCall(u, g.localTS(u, day, h, g.r.Intn(60), g.r.Intn(60)), g.userIP(u)), "", "")
 			}
 			for _, h := range u.hosts {

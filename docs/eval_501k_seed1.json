@@ -1,8 +1,8 @@
 {
-  "dataset": "200k_seed3",
-  "logs": 200356,
-  "windows": 3081,
-  "drain_seconds": 4.600804686,
+  "dataset": "501k_seed1",
+  "logs": 500856,
+  "windows": 4377,
+  "drain_seconds": 8.86444371,
   "per_type": {
     "credential_stuffing": {
       "attacks": 3,
@@ -14,11 +14,11 @@
       "cross_tp": 0
     },
     "data_exfiltration": {
-      "attacks": 2,
-      "detected": 2,
+      "attacks": 3,
+      "detected": 3,
       "recall": 1,
-      "alerts": 2,
-      "tp": 2,
+      "alerts": 3,
+      "tp": 3,
       "fp": 0,
       "cross_tp": 0
     },
@@ -44,10 +44,10 @@
       "attacks": 1,
       "detected": 1,
       "recall": 1,
-      "alerts": 3,
+      "alerts": 1,
       "tp": 1,
       "fp": 0,
-      "cross_tp": 2
+      "cross_tp": 0
     },
     "privilege_escalation": {
       "attacks": 2,
@@ -69,15 +69,15 @@
     }
   },
   "overall": {
-    "attacks": 13,
-    "detected": 13,
+    "attacks": 14,
+    "detected": 14,
     "recall": 1,
-    "alerts": 17,
-    "tp": 13,
+    "alerts": 16,
+    "tp": 14,
     "fp": 0,
-    "cross_tp": 4
+    "cross_tp": 2
   },
-  "type_exact_precision": 0.7647058823529411,
+  "type_exact_precision": 0.875,
   "operational_precision": 1,
   "benign_fp": 0
 }

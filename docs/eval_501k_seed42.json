@@ -1,8 +1,8 @@
 {
   "dataset": "501k_seed42",
-  "logs": 500857,
-  "windows": 4374,
-  "drain_seconds": 19.706366793,
+  "logs": 500856,
+  "windows": 4377,
+  "drain_seconds": 9.636531868,
   "per_type": {
     "credential_stuffing": {
       "attacks": 3,

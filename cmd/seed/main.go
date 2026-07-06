@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -30,7 +31,10 @@ func main() {
 	}
 
 	t0 := time.Now()
-	ds := gen.Generate(gen.Params{Logs: cfg.SeedLogs, Days: cfg.SeedDays, Seed: cfg.SeedSeed})
+	// SEED_ANCHOR_NOW=true ends the dataset near "now" for a fresh live feed;
+	// the default fixed anchor keeps eval seeding reproducible.
+	anchorNow, _ := strconv.ParseBool(os.Getenv("SEED_ANCHOR_NOW"))
+	ds := gen.Generate(gen.Params{Logs: cfg.SeedLogs, Days: cfg.SeedDays, Seed: cfg.SeedSeed, AnchorNow: anchorNow})
 	fmt.Printf("generated %d events, %d labelled attacks (seed=%d, days=%d) in %s\n",
 		len(ds.Events), len(ds.Attacks), cfg.SeedSeed, cfg.SeedDays, time.Since(t0).Round(time.Millisecond))
 
