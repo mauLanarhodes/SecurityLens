@@ -7,13 +7,42 @@ package rulegen
 import (
 	"context"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// allowedImports is the allowlist for generated rules: pure computation only.
+// Anything touching the OS, network, or process state is rejected before the
+// compiler ever sees it — a "detection rule" has no business execing binaries.
+var allowedImports = map[string]bool{
+	"fmt": true, "strings": true, "strconv": true, "time": true, "sort": true,
+	"math": true, "regexp": true, "unicode": true, "errors": true, "slices": true, "maps": true,
+}
+
+// checkImports parses the rule and rejects disallowed packages.
+func checkImports(code string) error {
+	f, err := parser.ParseFile(token.NewFileSet(), "rule.go", code, parser.ImportsOnly)
+	if err != nil {
+		return fmt.Errorf("parse: %v", err)
+	}
+	if f.Name.Name != "rule" {
+		return fmt.Errorf("rule must declare `package rule`, got %q", f.Name.Name)
+	}
+	for _, imp := range f.Imports {
+		path, _ := strconv.Unquote(imp.Path.Value)
+		if !allowedImports[path] {
+			return fmt.Errorf("import %q is not allowed in generated rules", path)
+		}
+	}
+	return nil
+}
 
 // goBinary resolves the go toolchain even when the server process's PATH
 // doesn't include it (falls back to the GOROOT this binary was built with).
@@ -69,7 +98,8 @@ type Finding struct {
 	Count    int
 }
 
-var _ = Detect // the generated file must provide: func Detect(events []Event) []Finding
+// The generated file must provide exactly: func Detect(events []Event) []Finding
+var _ func([]Event) []Finding = Detect
 `
 
 const goMod = "module ruleval\n\ngo 1.22\n"
@@ -80,6 +110,10 @@ func Validate(ctx context.Context, code string) (Result, error) {
 	res := Result{Code: code}
 	if strings.TrimSpace(code) == "" {
 		res.CompilerOutput = "empty rule code"
+		return res, nil
+	}
+	if err := checkImports(code); err != nil {
+		res.CompilerOutput = err.Error()
 		return res, nil
 	}
 	dir, err := os.MkdirTemp("", "securitylens-rulegen-*")
