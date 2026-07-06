@@ -1,0 +1,167 @@
+// Package pipeline drives the detection engine: it sweeps event-time windows
+// out of Postgres, fans each window out to every detector, dedups candidates
+// into alerts, correlates alerts into incidents, and maintains baselines.
+package pipeline
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"securitylens/internal/detect"
+	"securitylens/internal/model"
+	"securitylens/internal/store"
+)
+
+// MergePad is how close (in event time) two same-type/same-entity findings
+// must be to merge into one alert.
+const MergePad = 15 * time.Minute
+
+// IncidentGap is the correlation window for grouping alerts into incidents.
+const IncidentGap = time.Hour
+
+const watermarkKey = "sweep_watermark"
+
+type Pipeline struct {
+	St        *store.Store
+	Baselines *detect.Baselines
+	Detectors []detect.Detector
+	Step      time.Duration // windows are [t, t+2*Step), advancing by Step
+
+	// OnAlert, if set, is called for every created or updated alert (SSE feed).
+	OnAlert func(a model.Alert, created bool)
+}
+
+func New(st *store.Store, bl *detect.Baselines, step time.Duration, th detect.Thresholds) *Pipeline {
+	return &Pipeline{St: st, Baselines: bl, Detectors: detect.All(th), Step: step}
+}
+
+// sweep runs detection over the window [start, start+2*Step) and then merges
+// the window's leading step [start, start+Step) into the baselines. Detection
+// always runs before the baseline update so an attack's own events can never
+// vouch for themselves; the leading-step rule means every event is merged
+// exactly once even though successive windows overlap.
+func (p *Pipeline) sweep(ctx context.Context, start time.Time) (int, int, error) {
+	w := detect.Window{Start: start, End: start.Add(2 * p.Step)}
+	events, err := p.St.WindowEvents(ctx, w.Start, w.End)
+	if err != nil {
+		return 0, 0, err
+	}
+	alerts := 0
+	if len(events) > 0 {
+		view := p.Baselines.View()
+		for _, d := range p.Detectors {
+			for _, c := range d.Detect(w, events, view) {
+				a, created, err := p.St.UpsertAlert(ctx, c, MergePad)
+				if err != nil {
+					return 0, 0, fmt.Errorf("upsert alert: %w", err)
+				}
+				if a.ID == "" { // lost a dedup race; another writer owns it
+					continue
+				}
+				if _, err := p.St.CorrelateAlert(ctx, a, IncidentGap); err != nil {
+					return 0, 0, fmt.Errorf("correlate: %w", err)
+				}
+				if created {
+					alerts++
+				}
+				if p.OnAlert != nil {
+					p.OnAlert(a, created)
+				}
+			}
+		}
+		lead := events[:0:0]
+		cut := start.Add(p.Step)
+		for _, e := range events {
+			if e.TS.Before(cut) {
+				lead = append(lead, e)
+			}
+		}
+		if err := p.Baselines.Update(ctx, lead); err != nil {
+			return 0, 0, fmt.Errorf("baseline update: %w", err)
+		}
+	}
+	return len(events), alerts, nil
+}
+
+// Drain backfills detection over the entire log range (evaluator, first boot,
+// integration test). It resets baselines and swept state first.
+func (p *Pipeline) Drain(ctx context.Context) (windows int, events int, alerts int, err error) {
+	min, max, ok, err := p.St.MinMaxLogTS(ctx)
+	if err != nil || !ok {
+		return 0, 0, 0, err
+	}
+	if err := p.Baselines.Reset(ctx); err != nil {
+		return 0, 0, 0, err
+	}
+	start := min.Truncate(p.Step)
+	for t := start; t.Before(max); t = t.Add(p.Step) {
+		ne, na, err := p.sweep(ctx, t)
+		if err != nil {
+			return windows, events, alerts, err
+		}
+		windows++
+		events += ne
+		alerts += na
+	}
+	if err := p.St.SetState(ctx, watermarkKey, max.Truncate(p.Step).Add(p.Step).Format(time.RFC3339Nano)); err != nil {
+		return windows, events, alerts, err
+	}
+	return windows, events, alerts, nil
+}
+
+// RunLive sweeps newly-settled windows on a ticker. A window [t, t+2*Step) is
+// settled once now-lag >= t+2*Step. The watermark (next window start) is
+// persisted so restarts resume where they left off.
+func (p *Pipeline) RunLive(ctx context.Context, interval, lag time.Duration) {
+	if err := p.Baselines.Load(ctx); err != nil {
+		log.Printf("pipeline: baseline load: %v", err)
+	}
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
+	for {
+		if err := p.liveStep(ctx, lag); err != nil && ctx.Err() == nil {
+			log.Printf("pipeline: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+func (p *Pipeline) liveStep(ctx context.Context, lag time.Duration) error {
+	var next time.Time
+	if v, ok, err := p.St.GetState(ctx, watermarkKey); err != nil {
+		return err
+	} else if ok {
+		next, err = time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			return err
+		}
+	} else {
+		min, _, ok, err := p.St.MinMaxLogTS(ctx)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil // no logs yet
+		}
+		next = min.Truncate(p.Step)
+	}
+	for {
+		settled := time.Now().UTC().Add(-lag)
+		if !next.Add(2 * p.Step).Before(settled) {
+			return nil
+		}
+		if _, _, err := p.sweep(ctx, next); err != nil {
+			return err
+		}
+		next = next.Add(p.Step)
+		if err := p.St.SetState(ctx, watermarkKey, next.Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+	}
+}

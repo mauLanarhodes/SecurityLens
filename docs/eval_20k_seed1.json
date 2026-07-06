@@ -1,0 +1,83 @@
+{
+  "dataset": "20k_seed1",
+  "logs": 20026,
+  "windows": 2055,
+  "drain_seconds": 2.409694749,
+  "per_type": {
+    "credential_stuffing": {
+      "attacks": 3,
+      "detected": 3,
+      "recall": 1,
+      "alerts": 3,
+      "tp": 3,
+      "fp": 0,
+      "cross_tp": 0
+    },
+    "data_exfiltration": {
+      "attacks": 2,
+      "detected": 2,
+      "recall": 1,
+      "alerts": 2,
+      "tp": 2,
+      "fp": 0,
+      "cross_tp": 0
+    },
+    "identity_anomaly": {
+      "attacks": 1,
+      "detected": 1,
+      "recall": 1,
+      "alerts": 3,
+      "tp": 1,
+      "fp": 0,
+      "cross_tp": 2
+    },
+    "lateral_movement": {
+      "attacks": 1,
+      "detected": 1,
+      "recall": 1,
+      "alerts": 1,
+      "tp": 1,
+      "fp": 0,
+      "cross_tp": 0
+    },
+    "off_hours_access": {
+      "attacks": 1,
+      "detected": 1,
+      "recall": 1,
+      "alerts": 3,
+      "tp": 1,
+      "fp": 0,
+      "cross_tp": 2
+    },
+    "privilege_escalation": {
+      "attacks": 2,
+      "detected": 2,
+      "recall": 1,
+      "alerts": 2,
+      "tp": 2,
+      "fp": 0,
+      "cross_tp": 0
+    },
+    "sensitive_data_exposure": {
+      "attacks": 1,
+      "detected": 1,
+      "recall": 1,
+      "alerts": 1,
+      "tp": 1,
+      "fp": 0,
+      "cross_tp": 0
+    }
+  },
+  "overall": {
+    "attacks": 11,
+    "detected": 11,
+    "recall": 1,
+    "alerts": 15,
+    "tp": 11,
+    "fp": 0,
+    "cross_tp": 4
+  },
+  "type_exact_precision": 0.7333333333333333,
+  "operational_precision": 1,
+  "benign_fp": 0
+}
