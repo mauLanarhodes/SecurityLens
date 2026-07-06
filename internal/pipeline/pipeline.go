@@ -7,7 +7,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 
 	"securitylens/internal/detect"
 	"securitylens/internal/model"
@@ -111,18 +115,51 @@ func (p *Pipeline) Drain(ctx context.Context) (windows int, events int, alerts i
 	return windows, events, alerts, nil
 }
 
+const leaseKey = "pipeline_lease"
+const leaseTTL = 30 * time.Second
+
 // RunLive sweeps newly-settled windows on a ticker. A window [t, t+2*Step) is
 // settled once now-lag >= t+2*Step. The watermark (next window start) is
 // persisted so restarts resume where they left off.
+//
+// A Redis single-writer lease ensures only one pipeline instance sweeps at a
+// time: two concurrent instances would race on the shared per-user baselines
+// (each keeps its own in-memory copy while write-through mutating Redis),
+// which produces spurious identity/off-hours alerts during warm-up. A second
+// instance holds off until the lease lapses, then takes over from the
+// persisted watermark.
 func (p *Pipeline) RunLive(ctx context.Context, interval, lag time.Duration) {
+	rdb := p.Baselines.Redis()
+	owner, _ := os.Hostname()
+	owner = fmt.Sprintf("%s/%s", owner, uuid.NewString()[:8])
+	held := false
 	if err := p.Baselines.Load(ctx); err != nil {
 		log.Printf("pipeline: baseline load: %v", err)
 	}
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
-		if err := p.liveStep(ctx, lag); err != nil && ctx.Err() == nil {
-			log.Printf("pipeline: %v", err)
+		ok, err := acquireLease(ctx, rdb, owner, held)
+		switch {
+		case err != nil:
+			log.Printf("pipeline: lease: %v", err)
+		case !ok:
+			if held {
+				log.Printf("pipeline: lost single-writer lease, standing down")
+			}
+			held = false
+		default:
+			if !held {
+				log.Printf("pipeline: acquired single-writer lease as %s", owner)
+				// Reload baselines from Redis in case another writer advanced them.
+				if err := p.Baselines.Load(ctx); err != nil {
+					log.Printf("pipeline: baseline reload: %v", err)
+				}
+			}
+			held = true
+			if err := p.liveStep(ctx, lag); err != nil && ctx.Err() == nil {
+				log.Printf("pipeline: %v", err)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -130,6 +167,26 @@ func (p *Pipeline) RunLive(ctx context.Context, interval, lag time.Duration) {
 		case <-tick.C:
 		}
 	}
+}
+
+// acquireLease takes or renews the single-writer lease. If held, it renews
+// (extending the TTL); otherwise it tries to claim a free slot.
+func acquireLease(ctx context.Context, rdb *redis.Client, owner string, held bool) (bool, error) {
+	if held {
+		// Renew only if we still own it (compare-and-extend).
+		cur, err := rdb.Get(ctx, leaseKey).Result()
+		if err == redis.Nil {
+			return rdb.SetNX(ctx, leaseKey, owner, leaseTTL).Result()
+		}
+		if err != nil {
+			return false, err
+		}
+		if cur != owner {
+			return false, nil
+		}
+		return rdb.Set(ctx, leaseKey, owner, leaseTTL).Err() == nil, nil
+	}
+	return rdb.SetNX(ctx, leaseKey, owner, leaseTTL).Result()
 }
 
 func (p *Pipeline) liveStep(ctx context.Context, lag time.Duration) error {

@@ -35,6 +35,9 @@ func NewBaselines(rdb *redis.Client) *Baselines {
 	return &Baselines{rdb: rdb, users: map[string]*UserBaseline{}}
 }
 
+// Redis exposes the underlying client (used by the pipeline's single-writer lease).
+func (b *Baselines) Redis() *redis.Client { return b.rdb }
+
 // Load rebuilds the in-memory mirror from Redis (process start).
 func (b *Baselines) Load(ctx context.Context) error {
 	b.mu.Lock()
