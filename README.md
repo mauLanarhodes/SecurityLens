@@ -338,5 +338,9 @@ output.
   `pg_extension` and all queries are written to work either way. The Compose
   stack uses the TimescaleDB image; native verification here ran on vanilla
   PostgreSQL 16.
-- **Single node.** The pipeline runs in-process. Horizontal scale-out (sharding
-  the sweep by entity, multiple workers) is a design extension, not implemented.
+- **Single node.** The pipeline runs in-process. A Redis single-writer lease
+  ensures that if more than one backend instance is running, only one sweeps the
+  windows (concurrent sweeps would race on the shared per-user baselines);
+  verified by running two instances and killing the lease holder to confirm
+  failover. True horizontal scale-out (sharding the sweep by entity across
+  workers) is a design extension, not implemented.
