@@ -3,4 +3,7 @@ web/node_modules/
 web/dist/
 .env
 *.log
+training/data/
+training/runs/
+training/__pycache__/
 .claude/settings.local.json

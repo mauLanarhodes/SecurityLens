@@ -175,6 +175,11 @@ end-to-end detection test), `make check-label-firewall`, `make vet`, `make web`
 
 ### LLM: live and mock behind one interface
 
+For an experimental, locally fine-tuned open model for alert triage, see
+[`training/README.md`](training/README.md). This workflow prepares reviewed
+cases, measures an untuned baseline, and trains a QLoRA adapter. It does not
+replace the running mock/Anthropic client or provide trained weights.
+
 The triage, investigation, and rule-generation features call the Anthropic
 Messages API through a hand-rolled client (no SDK dependency), using adaptive
 thinking and retrying 429/5xx with backoff. When no API key is present, an
