@@ -1,7 +1,7 @@
 # Backend image: multi-stage Go build → distroless-ish minimal runtime.
 # Produces two binaries (server, eval) so `docker compose run backend /app/eval`
 # scores the detectors against ground truth in the same image.
-FROM golang:1.22-bookworm AS build
+FROM golang:1.26.4-bookworm AS build
 WORKDIR /src
 
 # Cache modules first.
@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server 
 
 # Runtime: needs the Go toolchain available for the rule-generation compile
 # check (internal/rulegen shells out to `go build` in an isolated module).
-FROM golang:1.22-bookworm AS runtime
+FROM golang:1.26.4-bookworm AS runtime
 WORKDIR /app
 ENV GOFLAGS=-mod=mod GOTOOLCHAIN=local
 COPY --from=build /out/server /app/server
