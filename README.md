@@ -201,6 +201,19 @@ the key in a `VITE_*` variable. `GET /api/health` should report `llm_mode: "live
 and `llm_model: "gpt-6.1-sol"`; this reports configuration, not API connectivity.
 Trigger triage on an alert to verify your key, model access, and API billing.
 
+To check the complete live path on a machine with Docker and Python 3:
+
+```bash
+docker compose up --build -d
+python3 scripts/live_smoke.py
+```
+
+The script waits for the backend to finish seeding and detect an alert, then
+calls triage, investigation, and rule generation through the API. It checks that
+each response uses the live model and that the generated Go rule compiles. The
+script never reads your key; Compose passes it to the backend. A successful
+health check alone does not verify that the OpenAI request works.
+
 With `LLM_MODE=auto`, a missing selected-provider key uses the deterministic
 **mock**. `LLM_MODE=live` fails at startup if that key is missing; provider errors
 never silently fall back to mock output. Every result is tagged `mock: true|false`
