@@ -41,7 +41,7 @@ detectors read only operational fields and never the ground-truth labels (see
 the label firewall below). The LLM is treated as an untrusted code generator:
 any Go it produces is checked against an import allowlist and compiled in an
 isolated throwaway module before a human ever sees it, and it is never executed.
-Secrets (the Anthropic API key) come from the environment and are never logged;
+Secrets (the selected provider's API key) come from the environment and are never logged;
 the secrets classifier even redacts the secrets it finds before they reach an
 alert.
 
@@ -107,7 +107,7 @@ detection on operational fields, not label leakage.
 ### Option A — Docker Compose (one command)
 
 ```bash
-cp .env.example .env        # optional: add ANTHROPIC_API_KEY for live LLM
+cp .env.example .env        # add OPENAI_API_KEY for live LLM
 docker compose up --build
 ```
 
@@ -165,9 +165,11 @@ end-to-end detection test), `make check-label-firewall`, `make vet`, `make web`
 | `DATABASE_URL` | `postgres://lens:lens@…/securitylens` | Postgres DSN |
 | `REDIS_ADDR` | `127.0.0.1:6379` | Redis address |
 | `PORT` | `8080` | API / dashboard port |
-| `ANTHROPIC_API_KEY` | *(empty)* | Anthropic key; empty selects the mock LLM |
-| `LLM_MODE` | `auto` | `auto` = live if a key is present else mock; force with `mock` / `live` |
-| `LLM_MODEL` | `claude-opus-4-8` | Model used for live calls |
+| `LLM_PROVIDER` | `openai` | Live provider: `openai` or `anthropic` |
+| `OPENAI_API_KEY` | *(empty)* | Backend-only OpenAI API key |
+| `ANTHROPIC_API_KEY` | *(empty)* | Used only with `LLM_PROVIDER=anthropic` |
+| `LLM_MODE` | `auto` | `auto` = live with the selected provider's key, else mock; `mock` always stays offline; `live` requires a key |
+| `LLM_MODEL` | *(provider default)* | OpenAI: `gpt-6.1-sol`; Anthropic: `claude-opus-4-8` |
 | `SEED_ON_START` | `false` (`true` in compose) | Seed the dataset on boot if the logs table is empty |
 | `SEED_LOGS` / `SEED_DAYS` / `SEED_SEED` | `200000` / `21` / `1` | Synthetic dataset size, span, and RNG seed |
 | `SEED_ANCHOR_NOW` | `false` | End the dataset near "now" (fresh live feed); the evaluator omits this for reproducibility |
@@ -175,15 +177,39 @@ end-to-end detection test), `make check-label-firewall`, `make vet`, `make web`
 
 ### LLM: live and mock behind one interface
 
-The triage, investigation, and rule-generation features call the Anthropic
-Messages API through a hand-rolled client (no SDK dependency), using adaptive
-thinking and retrying 429/5xx with backoff. When no API key is present, an
-interface-compatible **mock** returns deterministic, labelled output of the same
-JSON shape, parsed through the same code path, so the full pipeline and every
-dashboard view are exercisable offline. Setting `ANTHROPIC_API_KEY` switches to
-live calls with no code change. Every LLM result is tagged `mock: true|false` in
-the API and UI so you always know which path produced it. Triage results are
-cached in Redis and are never invoked on the per-log hot path.
+The triage, investigation, and rule-generation features default to the **OpenAI
+Responses API** with `gpt-6.1-sol` and medium reasoning. The HTTP client has no SDK
+dependency, retries temporary network errors and 429/5xx responses, and rejects
+refusals, incomplete responses, and empty output before parsing JSON or Go code.
+Requests set `store: false` (response storage is disabled; this does not imply
+zero retention) and cap output at **25,000 tokens including reasoning**. That is a
+ceiling, not a fixed charge; usage accounting includes reasoning output tokens.
+
+To enable OpenAI, edit `.env` locally:
+
+```dotenv
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your-openai-api-key
+LLM_MODEL=gpt-6.1-sol
+LLM_MODE=live
+```
+
+Then run `docker compose up --build -d`. Compose passes these variables only to
+the backend. For a native run, export the same variables in your shell before
+`make run`; the Go backend does not load `.env` itself. Do not commit `.env` or put
+the key in a `VITE_*` variable. `GET /api/health` should report `llm_mode: "live"`
+and `llm_model: "gpt-6.1-sol"`; this reports configuration, not API connectivity.
+Trigger triage on an alert to verify your key, model access, and API billing.
+
+With `LLM_MODE=auto`, a missing selected-provider key uses the deterministic
+**mock**. `LLM_MODE=live` fails at startup if that key is missing; provider errors
+never silently fall back to mock output. Every result is tagged `mock: true|false`
+in the API and UI. Triage results are cached in Redis, keyed by model and evidence,
+and the LLM is never invoked on the per-log hot path.
+
+The existing Anthropic Messages client remains available: set
+`LLM_PROVIDER=anthropic`, supply `ANTHROPIC_API_KEY`, and clear `LLM_MODEL` to use
+its provider default. Keys are never used across providers.
 
 ---
 
@@ -319,12 +345,13 @@ output.
   secret confusers) so the detectors face plausible confusers, but real
   environments will need threshold tuning. Recall/precision are reported on this
   synthetic ground truth.
-- **Mock LLM without a key.** Absent `ANTHROPIC_API_KEY`, triage / investigation
+- **Mock LLM without a key.** In auto mode, absent the selected provider's key, triage / investigation
   / rule-gen use a deterministic mock behind the same interface. It exercises
   every code path and UI state but does not reflect live model quality; results
-  are labelled `mock: true`. The live Anthropic path is implemented and selected
-  automatically when a key is present, but was not exercised here because no key
-  was provided to this build.
+  are labelled `mock: true`. The OpenAI client and provider selection are tested
+  against simulated HTTP responses. Live model quality and account access still
+  require validation with your own API key; no live OpenAI call was made as part
+  of this integration change.
 - **Docker not built in this environment.** The Compose stack, Dockerfiles, and
   nginx config are authored and self-consistent; the nginx config passes
   `nginx -t` and the SSE-through-nginx behaviour was verified against the running

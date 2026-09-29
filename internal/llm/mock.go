@@ -9,7 +9,7 @@ import (
 )
 
 // Mock is a deterministic, interface-compatible stand-in used when no
-// ANTHROPIC_API_KEY is present. It returns output of the same JSON shape as
+// API key for the selected provider is present. It returns the same JSON shape as
 // the live model for each feature, derived only from the request content, so
 // the entire pipeline and every dashboard view are exercisable offline and
 // repeatably. All results flow through the same parsing paths as live output.

@@ -22,6 +22,10 @@ import (
 
 func main() {
 	cfg := config.Load()
+	client, err := llm.NewClient(cfg)
+	if err != nil {
+		log.Fatalf("llm configuration: %v", err)
+	}
 	ctx := context.Background()
 
 	st, err := store.New(ctx, cfg.DatabaseURL)
@@ -58,13 +62,10 @@ func main() {
 		}
 	}
 
-	var client llm.Client
-	if cfg.LLMLive() {
-		client = llm.NewAnthropic(cfg.AnthropicAPIKey, os.Getenv("LLM_MODEL"))
-		log.Printf("llm: live (%s)", client.ModelName())
+	if client.Live() {
+		log.Printf("llm: live (%s / %s)", cfg.LLMProvider, client.ModelName())
 	} else {
-		client = &llm.Mock{}
-		log.Printf("llm: mock (no API key or LLM_MODE=mock)")
+		log.Printf("llm: mock (no %s API key or LLM_MODE=mock)", cfg.LLMProvider)
 	}
 	svc := llm.NewService(client, rdb, st)
 
