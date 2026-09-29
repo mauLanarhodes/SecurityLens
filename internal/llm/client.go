@@ -1,5 +1,5 @@
-// Package llm holds the LLM integration: a hand-rolled Anthropic Messages API
-// client, an interface-compatible deterministic mock, and the triage /
+// Package llm holds the LLM integration: OpenAI Responses and Anthropic Messages
+// API clients, an interface-compatible deterministic mock, and the triage /
 // investigation / rule-generation features built on top.
 //
 // The LLM is never invoked on the per-log hot path. Every result is tagged
@@ -18,7 +18,7 @@ type Message struct {
 type Request struct {
 	System    string
 	Messages  []Message
-	MaxTokens int
+	MaxTokens int // total output budget, including reasoning tokens
 }
 
 // Response is the completed text plus usage accounting.
@@ -30,7 +30,7 @@ type Response struct {
 	OutputTokens int
 }
 
-// Client abstracts the live Anthropic client and the mock.
+// Client abstracts the live providers and the mock.
 type Client interface {
 	Complete(ctx context.Context, req Request) (Response, error)
 	Live() bool

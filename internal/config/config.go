@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -13,6 +14,9 @@ type Config struct {
 	Port        string
 
 	AnthropicAPIKey string
+	OpenAIAPIKey    string
+	LLMProvider     string // openai | anthropic
+	LLMModel        string // empty selects the provider's default
 	LLMMode         string // auto | mock | live
 
 	SeedOnStart bool
@@ -30,8 +34,11 @@ func Load() Config {
 		DatabaseURL:     getenv("DATABASE_URL", "postgres://lens:lens@127.0.0.1:5432/securitylens?sslmode=disable"),
 		RedisAddr:       getenv("REDIS_ADDR", "127.0.0.1:6379"),
 		Port:            getenv("PORT", "8080"),
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		LLMMode:         getenv("LLM_MODE", "auto"),
+		AnthropicAPIKey: strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")),
+		OpenAIAPIKey:    strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+		LLMProvider:     strings.ToLower(strings.TrimSpace(getenv("LLM_PROVIDER", "openai"))),
+		LLMModel:        strings.TrimSpace(os.Getenv("LLM_MODEL")),
+		LLMMode:         strings.ToLower(strings.TrimSpace(getenv("LLM_MODE", "auto"))),
 		SeedOnStart:     getbool("SEED_ON_START", false),
 		SeedLogs:        getint("SEED_LOGS", 200000),
 		SeedDays:        getint("SEED_DAYS", 21),
@@ -42,7 +49,7 @@ func Load() Config {
 	}
 }
 
-// LLMLive reports whether live Anthropic calls should be used.
+// LLMLive reports whether the selected provider should make live calls.
 func (c Config) LLMLive() bool {
 	switch c.LLMMode {
 	case "live":
@@ -50,6 +57,9 @@ func (c Config) LLMLive() bool {
 	case "mock":
 		return false
 	default: // auto
+		if c.LLMProvider == "openai" {
+			return c.OpenAIAPIKey != ""
+		}
 		return c.AnthropicAPIKey != ""
 	}
 }

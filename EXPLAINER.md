@@ -187,11 +187,14 @@ the page over a single long-lived HTTP connection. It's simpler than WebSockets
 The gotcha — that a reverse proxy will buffer it and stall the feed — gets its own
 section (§15).
 
-### AI: the Anthropic Claude API
+### AI: the OpenAI Responses API
 
-The LLM features (triage, investigation, English→Go rule generation) call **Claude**
-through a **hand-rolled HTTP client** (no SDK) so you can see exactly what a Messages
-API request looks like. When no API key is present, an interface-compatible **mock**
+The LLM features (triage, investigation, English→Go rule generation) default to
+**OpenAI `gpt-6.1-sol`** through a **hand-rolled HTTP client** (no SDK). It calls the
+Responses API with medium reasoning and `store: false`. Select it with
+`LLM_PROVIDER=openai` and a backend-only `OPENAI_API_KEY`; `LLM_MODEL` can override
+the model. Anthropic remains an explicit alternative. When the selected provider
+has no API key in auto mode, an interface-compatible **mock**
 returns deterministic output of the same shape, so the whole system is fully
 exercisable offline.
 
@@ -687,7 +690,7 @@ The LLM (`internal/llm/`) does three things, each requiring human-like judgement
 hypothesis over the surrounding activity), and **rule generation** (§12). It is
 *never* called per log.
 
-### One interface, two implementations
+### One interface, three implementations
 
 ```go
 type Client interface {
@@ -697,7 +700,13 @@ type Client interface {
 }
 ```
 
-- **`Anthropic`** (`anthropic.go`) — a hand-rolled HTTP client for the Claude Messages
+- **`OpenAI`** (`openai.go`) — the default HTTP client for `/v1/responses`. Sends
+  bearer authentication, `input`, `instructions`, `reasoning`, `max_output_tokens`,
+  and `store: false`. It extracts only assistant `output_text` content, records
+  input/output usage, retries temporary failures, and rejects refusals and
+  incomplete output before the service consumes it. All features have a 25,000
+  total output-token ceiling to leave room for reasoning.
+- **`Anthropic`** (`anthropic.go`) — an optional HTTP client for the Claude Messages
   API. Sends `x-api-key`, `anthropic-version`, and a JSON body with `model`,
   `max_tokens`, `messages`, and `thinking: {type: "adaptive"}`. It checks
   `stop_reason` for a refusal *before* reading content, and retries 429/5xx with
@@ -725,14 +734,14 @@ sequenceDiagram
     participant UI
     participant API
     participant Redis
-    participant Claude
+    participant LLM
     UI->>API: POST /alerts/{id}/triage
     API->>Redis: GET llm:triage:<hash>
     alt cache hit
         Redis-->>API: cached verdict
     else cache miss
-        API->>Claude: Complete(prompt)
-        Claude-->>API: verdict JSON
+        API->>LLM: Complete(prompt)
+        LLM-->>API: verdict JSON
         API->>Redis: SET llm:triage:<hash> (24h TTL)
     end
     API-->>UI: {verdict, confidence, reasoning, next_steps, mock}

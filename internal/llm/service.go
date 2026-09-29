@@ -15,6 +15,10 @@ import (
 	"securitylens/internal/store"
 )
 
+// Reserve room for reasoning as well as the final JSON/code. The old 1–2K
+// budgets could be exhausted before a reasoning model produced visible output.
+const featureOutputBudget = 25000
+
 // Service wires a Client (live or mock) to the Redis result cache and the
 // llm_usage accounting table.
 type Service struct {
@@ -79,7 +83,7 @@ Respond with ONLY a JSON object:
 
 	resp, err := s.Client.Complete(ctx, Request{
 		Messages:  []Message{{Role: "user", Content: prompt}},
-		MaxTokens: 1024,
+		MaxTokens: featureOutputBudget,
 	})
 	if err != nil {
 		return model.Triage{}, err
@@ -145,7 +149,7 @@ Respond with ONLY a JSON object:
 
 	resp, err := s.Client.Complete(ctx, Request{
 		Messages:  []Message{{Role: "user", Content: prompt}},
-		MaxTokens: 1500,
+		MaxTokens: featureOutputBudget,
 	})
 	if err != nil {
 		return Investigation{}, err
@@ -201,7 +205,7 @@ Respond with ONLY the Go code in a single fenced code block.`, description)
 
 	resp, err := s.Client.Complete(ctx, Request{
 		Messages:  []Message{{Role: "user", Content: prompt}},
-		MaxTokens: 2048,
+		MaxTokens: featureOutputBudget,
 	})
 	if err != nil {
 		return "", err

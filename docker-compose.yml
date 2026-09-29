@@ -38,9 +38,12 @@ services:
       SEED_LOGS: "${SEED_LOGS:-200000}"
       SEED_DAYS: "${SEED_DAYS:-21}"
       SEED_SEED: "${SEED_SEED:-1}"
-      # Empty key selects the deterministic mock; set ANTHROPIC_API_KEY in .env
-      # to switch triage/investigation/rule-gen to live Anthropic calls.
+      # Backend-only credentials. OpenAI is the default provider; an empty
+      # selected-provider key uses the deterministic mock in auto mode.
+      LLM_PROVIDER: "${LLM_PROVIDER:-openai}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-}"
       LLM_MODE: "${LLM_MODE:-auto}"
     depends_on:
       db:
