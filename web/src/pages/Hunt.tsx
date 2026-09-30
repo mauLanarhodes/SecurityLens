@@ -11,9 +11,20 @@ const EXAMPLES = [
 
 // Hunt: English → Go detection rule. Generated code is compiled in an
 // isolated module (never executed) before an analyst sees it.
-export default function Hunt() {
+export default function Hunt({ canOperate }: { canOperate: boolean }) {
   const [description, setDescription] = useState("");
   const gen = useMutation({ mutationFn: (d: string) => api.generateRule(d) });
+
+  if (!canOperate) {
+    return (
+      <div className="card mx-auto max-w-4xl p-5">
+        <h2 className="text-lg font-semibold">Rule generator</h2>
+        <p className="mt-2 text-sm" style={{ color: "var(--ink-2)" }}>
+          Generating rule drafts requires operator access. Your viewer session is read-only.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">

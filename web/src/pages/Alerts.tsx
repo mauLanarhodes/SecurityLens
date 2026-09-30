@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtTime, type Investigation } from "../api";
 import { Empty, MockTag, SevBadge, Spinner, TypeChip } from "../bits";
 
-function AlertDetail({ id, onClose }: { id: string; onClose: () => void }) {
+function AlertDetail({ id, onClose, canOperate }: { id: string; onClose: () => void; canOperate: boolean }) {
   const qc = useQueryClient();
   const detail = useQuery({ queryKey: ["alert", id], queryFn: () => api.alert(id) });
   const [inv, setInv] = useState<Investigation | null>(null);
@@ -47,7 +47,7 @@ function AlertDetail({ id, onClose }: { id: string; onClose: () => void }) {
         <button onClick={onClose} className="text-sm" style={{ color: "var(--ink-muted)" }}>✕ close</button>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      {canOperate && <div className="mt-4 flex flex-wrap gap-2">
         <button
           onClick={() => triage.mutate()}
           disabled={triage.isPending}
@@ -68,17 +68,18 @@ function AlertDetail({ id, onClose }: { id: string; onClose: () => void }) {
           <button
             key={s}
             onClick={() => setStatus.mutate(s)}
+            disabled={setStatus.isPending}
             className="rounded border px-3 py-1.5 text-sm"
             style={{ borderColor: "var(--ring)", color: "var(--ink-2)" }}
           >
             {s === "dismissed" ? "dismiss (FP)" : s}
           </button>
         ))}
-      </div>
+      </div>}
 
-      {(triage.error || investigate.error) && (
+      {(triage.error || investigate.error || setStatus.error) && (
         <div className="mt-3 text-sm" style={{ color: "var(--status-critical)" }}>
-          {String(triage.error ?? investigate.error)}
+          {String(triage.error ?? investigate.error ?? setStatus.error)}
         </div>
       )}
 
@@ -192,7 +193,7 @@ function AlertDetail({ id, onClose }: { id: string; onClose: () => void }) {
   );
 }
 
-export default function Alerts() {
+export default function Alerts({ canOperate }: { canOperate: boolean }) {
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const alerts = useQuery({
@@ -250,7 +251,7 @@ export default function Alerts() {
       </div>
       <div>
         {selected ? (
-          <AlertDetail id={selected} onClose={() => setSelected(null)} />
+          <AlertDetail key={selected} id={selected} onClose={() => setSelected(null)} canOperate={canOperate} />
         ) : (
           <div className="card"><Empty text="select an alert to see evidence, LLM triage, investigation, and the runbook" /></div>
         )}

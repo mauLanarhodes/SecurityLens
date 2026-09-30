@@ -3,7 +3,7 @@ services:
     image: timescale/timescaledb:2.17.2-pg16
     environment:
       POSTGRES_USER: lens
-      POSTGRES_PASSWORD: lens
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Generate POSTGRES_PASSWORD in .env; see docs/pilot-setup.md}"
       POSTGRES_DB: securitylens
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -12,8 +12,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    ports:
-      - "5432:5432"
+    networks: [data]
 
   redis:
     image: redis:7-alpine
@@ -23,18 +22,21 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    ports:
-      - "6379:6379"
+    networks: [data]
 
   backend:
     build:
       context: .
     environment:
-      DATABASE_URL: postgres://lens:lens@db:5432/securitylens?sslmode=disable
+      DATABASE_URL: "postgres://lens:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/securitylens?sslmode=disable"
       REDIS_ADDR: redis:6379
       PORT: "8080"
-      # Seed on first boot if the logs table is empty.
-      SEED_ON_START: "true"
+      BIND_ADDR: "0.0.0.0"
+      AUTH_OPERATOR_TOKEN: "${AUTH_OPERATOR_TOKEN:?Generate AUTH_OPERATOR_TOKEN in .env; see docs/pilot-setup.md}"
+      AUTH_VIEWER_TOKEN: "${AUTH_VIEWER_TOKEN:-}"
+      AUTH_COOKIE_SECURE: "${AUTH_COOKIE_SECURE:-true}"
+      # A pilot starts empty. Enable only in a separate synthetic demo stack.
+      SEED_ON_START: "${SEED_ON_START:-false}"
       SEED_LOGS: "${SEED_LOGS:-200000}"
       SEED_DAYS: "${SEED_DAYS:-21}"
       SEED_SEED: "${SEED_SEED:-1}"
@@ -44,19 +46,19 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       LLM_MODEL: "${LLM_MODEL:-}"
-      LLM_MODE: "${LLM_MODE:-auto}"
+      LLM_MODE: "${LLM_MODE:-mock}"
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health || exit 1"]
+      test: ["CMD", "/app/server", "-healthcheck"]
       interval: 10s
       timeout: 5s
       retries: 20
-    ports:
-      - "8080:8080"
+    # data is isolated; outbound lets the backend reach the configured LLM.
+    networks: [data, app, outbound]
 
   web:
     build:
@@ -65,7 +67,15 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "3000:80"
+      - "127.0.0.1:3000:80"
+    networks: [app]
+
+networks:
+  data:
+    internal: true
+  app:
+    internal: true
+  outbound:
 
 volumes:
   pgdata:

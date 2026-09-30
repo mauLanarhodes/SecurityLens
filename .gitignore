@@ -2,5 +2,7 @@ bin/
 web/node_modules/
 web/dist/
 .env
+.env.*
+!.env.example
 *.log
 .claude/settings.local.json

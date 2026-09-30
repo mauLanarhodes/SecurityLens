@@ -29,10 +29,11 @@ type Server struct {
 	Redis *redis.Client
 	LLM   *llm.Service
 	Cfg   config.Config
+	auth  *authManager
 }
 
 func New(st *store.Store, rdb *redis.Client, svc *llm.Service, cfg config.Config) *Server {
-	return &Server{St: st, Redis: rdb, LLM: svc, Cfg: cfg}
+	return &Server{St: st, Redis: rdb, LLM: svc, Cfg: cfg, auth: newAuth(cfg)}
 }
 
 // PublishAlert pushes an alert event to the SSE stream via Redis pub/sub.
@@ -49,8 +50,17 @@ func (s *Server) Router() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	_ = r.SetTrustedProxies(nil)
+	if s.auth == nil {
+		s.auth = newAuth(s.Cfg)
+	}
+	r.Use(s.auth.guard)
+	r.GET("/readyz", s.ready)
 
 	api := r.Group("/api")
+	api.POST("/session", s.auth.login)
+	api.GET("/session", s.auth.session)
+	api.DELETE("/session", s.auth.logout)
 	api.GET("/health", s.health)
 	api.GET("/logs", s.logs)
 	api.GET("/stream", s.stream)
@@ -68,6 +78,17 @@ func (s *Server) Router() *gin.Engine {
 	api.GET("/eval", s.evalRuns)
 	api.GET("/oncall", s.oncall)
 	return r
+}
+
+// ready exposes only readiness, never counts, configuration, or provider details.
+func (s *Server) ready(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	if !s.auth.enabled || s.St == nil || s.Redis == nil || s.St.Health(ctx) != nil || s.Redis.Ping(ctx).Err() != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"ok": false})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (s *Server) health(c *gin.Context) {
@@ -102,12 +123,15 @@ func (s *Server) logs(c *gin.Context) {
 // stream is the SSE endpoint: it pushes alert events from Redis pub/sub and
 // tails the logs table by event time as wall-clock time advances.
 func (s *Server) stream(c *gin.Context) {
+	controller := http.NewResponseController(c.Writer)
+	_ = controller.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	h := c.Writer.Header()
 	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-cache")
+	h.Set("Cache-Control", "no-store")
 	h.Set("Connection", "keep-alive")
 	h.Set("X-Accel-Buffering", "no") // nginx: do not buffer this response
 	c.Writer.Flush()
+	_ = controller.SetWriteDeadline(time.Time{})
 
 	ctx := c.Request.Context()
 	sub := s.Redis.Subscribe(ctx, EventsChannel)
@@ -121,9 +145,14 @@ func (s *Server) stream(c *gin.Context) {
 	defer heartbeat.Stop()
 
 	send := func(event string, data any) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		_ = controller.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		b, _ := json.Marshal(data)
 		_, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, b)
 		c.Writer.Flush()
+		_ = controller.SetWriteDeadline(time.Time{})
 		return err == nil
 	}
 
@@ -131,7 +160,10 @@ func (s *Server) stream(c *gin.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case msg := <-events:
+		case msg, ok := <-events:
+			if !ok || ctx.Err() != nil {
+				return
+			}
 			var payload json.RawMessage = []byte(msg.Payload)
 			if !send("alert", payload) {
 				return
@@ -153,10 +185,15 @@ func (s *Server) stream(c *gin.Context) {
 			}
 			lastTS = now
 		case <-heartbeat.C:
+			if ctx.Err() != nil {
+				return
+			}
+			_ = controller.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if _, err := fmt.Fprint(c.Writer, ": ping\n\n"); err != nil {
 				return
 			}
 			c.Writer.Flush()
+			_ = controller.SetWriteDeadline(time.Time{})
 		}
 	}
 }
@@ -321,10 +358,10 @@ func (s *Server) metrics(c *gin.Context) {
 		}
 	}
 	c.JSON(200, gin.H{
-		"alerts":  alerts,
-		"llm":     usage,
-		"logs":    nLogs,
-		"fp_rate": fpRate,
+		"alerts":                          alerts,
+		"llm":                             usage,
+		"logs":                            nLogs,
+		"fp_rate":                         fpRate,
 		"detection_latency_bound_seconds": (s.Cfg.SweepInterval + s.Cfg.DetectLag).Seconds(),
 	})
 }

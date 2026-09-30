@@ -90,7 +90,7 @@ export default function Metrics() {
         <EvalPanel result={latest.result} dataset={latest.dataset} ts={latest.ts} />
       ) : (
         <div className="card">
-          <Empty text="no evaluation run recorded yet — run `make eval` (or `docker compose run --rm backend /app/eval`) to score the detectors against ground truth" />
+          <Empty text="No synthetic evaluation results. Run evaluations against a separate demonstration database." />
         </div>
       )}
 

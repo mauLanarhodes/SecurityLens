@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtBytes, type Alert, type LogEvent } from "../api";
 import { ActivityTimeline, AlertsByType } from "../charts";
@@ -17,29 +17,43 @@ function LiveFeed() {
   const [rows, setRows] = useState<LogEvent[]>([]);
   const [liveAlerts, setLiveAlerts] = useState<Alert[]>([]);
   const [connected, setConnected] = useState(false);
-  const boot = useRef(false);
   const qc = useQueryClient();
 
   useEffect(() => {
-    if (!boot.current) {
-      boot.current = true;
-      api.logs(40).then((d) => setRows(d.logs.slice(-40)));
-    }
+    let active = true;
+    let checkingSession = false;
+    api.logs(40).then((d) => {
+      if (active) setRows(d.logs.slice(-40));
+    }).catch(() => { /* The shared API helper handles expired sessions. */ });
     const es = new EventSource("/api/stream");
-    es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
+    es.onopen = () => { if (active) setConnected(true); };
+    es.onerror = () => {
+      if (!active) return;
+      setConnected(false);
+      // EventSource hides HTTP status; a normal request detects session expiry.
+      if (!checkingSession) {
+        checkingSession = true;
+        api.session().catch(() => { /* Connection errors keep the stream retrying. */ })
+          .finally(() => { checkingSession = false; });
+      }
+    };
     es.addEventListener("log", (e) => {
+      if (!active) return;
       const ev = JSON.parse((e as MessageEvent).data) as LogEvent;
       setRows((r) => [...r.slice(-79), ev]);
     });
     es.addEventListener("alert", (e) => {
+      if (!active) return;
       const payload = JSON.parse((e as MessageEvent).data) as { kind: string; alert: Alert };
       if (payload.kind === "alert_created") {
         setLiveAlerts((a) => [payload.alert, ...a.slice(0, 4)]);
         qc.invalidateQueries({ queryKey: ["alerts"] });
       }
     });
-    return () => es.close();
+    return () => {
+      active = false;
+      es.close();
+    };
   }, [qc]);
 
   return (
@@ -107,7 +121,8 @@ export default function Overview() {
       <div className="grid gap-4 lg:grid-cols-5">
         <div className="card p-4 lg:col-span-3">
           <div className="mb-2 text-sm font-medium">Activity timeline</div>
-          {timeline.data ? <ActivityTimeline points={timeline.data.points} /> : <Empty text="loading…" />}
+          {timeline.data?.points.length ? <ActivityTimeline points={timeline.data.points} />
+            : <Empty text={timeline.isLoading ? "loading…" : "no events yet"} />}
         </div>
         <div className="lg:col-span-2">
           <LiveFeed />

@@ -1,5 +1,6 @@
 GO ?= go
-export DATABASE_URL ?= postgres://lens:lens@127.0.0.1:5432/securitylens?sslmode=disable
+# Supply DATABASE_URL explicitly; do not fall back to example credentials.
+export DATABASE_URL
 export REDIS_ADDR ?= 127.0.0.1:6379
 
 .PHONY: help build run seed eval test test-integration check-label-firewall vet web compose-config clean

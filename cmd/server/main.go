@@ -4,10 +4,13 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -21,7 +24,24 @@ import (
 )
 
 func main() {
+	healthcheck := flag.Bool("healthcheck", false, "check local server readiness and exit")
+	flag.Parse()
 	cfg := config.Load()
+	if *healthcheck {
+		client := &http.Client{Timeout: 4 * time.Second}
+		response, err := client.Get("http://" + net.JoinHostPort("127.0.0.1", cfg.Port) + "/readyz")
+		if err != nil {
+			os.Exit(1)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		return
+	}
+	if err := cfg.ValidateServer(); err != nil {
+		log.Fatalf("configuration: %v", err)
+	}
 	client, err := llm.NewClient(cfg)
 	if err != nil {
 		log.Fatalf("llm configuration: %v", err)
@@ -79,9 +99,15 @@ func main() {
 
 	r := srv.Router()
 
-	addr := ":" + cfg.Port
+	addr := net.JoinHostPort(cfg.BindAddr, cfg.Port)
 	log.Printf("listening on %s", addr)
-	if err := http.ListenAndServe(addr, withStatic(r)); err != nil {
+	server := &http.Server{
+		Addr: addr, Handler: withStatic(r),
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
+		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10,
+		// SSE has bounded individual writes instead of a response-wide timeout.
+	}
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -95,7 +121,7 @@ func withStatic(next http.Handler) http.Handler {
 	}
 	fs := http.FileServer(http.Dir(dist))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/readyz" {
 			next.ServeHTTP(w, r)
 			return
 		}

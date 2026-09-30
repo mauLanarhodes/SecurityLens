@@ -104,53 +104,45 @@ detection on operational fields, not label leakage.
 
 ## Quickstart
 
-### Option A — Docker Compose (one command)
+### Option A — private pilot with Docker Compose
+
+Follow [the pilot setup guide](docs/pilot-setup.md) to generate local credentials,
+start a separate pilot database, and sign in. Required secrets have no example
+fallback. Compose publishes only `127.0.0.1:3000`; the API, Postgres, and Redis
+have no published ports. Remote analysts connect through an SSH tunnel, or an
+operator-configured private HTTPS gateway.
+
+The pilot starts **empty**, with synthetic seeding disabled and the LLM in mock
+mode. Real log ingestion is the next milestone and is not implemented yet.
+All `/api` data routes require authentication. Viewers can read evidence;
+operators can also update alerts and request AI triage, investigation, and rule
+drafts. Dashboard sign-in exchanges a role token for an expiring HttpOnly cookie.
+These are shared pilot credentials, not individual accounts or SSO.
+
+For a synthetic demo, use a separate Compose project and explicitly set
+`SEED_ON_START=true`. Do not mix demo and pilot databases. Existing database
+volumes retain their data and password; changing `.env` does not rotate an
+existing database password. The setup guide covers this distinction.
+
+### Option B — native development
+
+Requires Go 1.26.4+, Node 20+, PostgreSQL 16+ (TimescaleDB optional), and Redis.
+Provision a database with a generated password and export `DATABASE_URL`,
+`AUTH_OPERATOR_TOKEN`, and optionally `AUTH_VIEWER_TOKEN` as described in the
+[setup guide](docs/pilot-setup.md#native-development). No database credentials
+are supplied by default. The Go backend does not load `.env` automatically.
 
 ```bash
-cp .env.example .env        # add OPENAI_API_KEY for live LLM
-docker compose up --build
+export REDIS_ADDR=127.0.0.1:6379
+export AUTH_COOKIE_SECURE=false  # localhost HTTP only
+export LLM_MODE=mock
+make run                       # binds to 127.0.0.1:8080
+# In another terminal:
+cd web && npm install && npm run dev  # 127.0.0.1:3000, proxies /api
 ```
 
-This starts Postgres/TimescaleDB, Redis, the Go backend, and the nginx-served
-front end. On first boot the backend seeds a synthetic dataset (200k logs / 21
-days by default, configurable in `.env`) and begins detecting. Then open:
-
-- **Dashboard:** http://localhost:3000
-- **API:** http://localhost:8080/api/health
-
-To populate the accuracy panel with a scored run against ground truth:
-
-```bash
-docker compose run --rm backend /app/eval
-```
-
-> **Build status in this environment.** The Compose stack, Dockerfiles, and
-> nginx config are authored and internally verified — the nginx config passes a
-> real `nginx -t`, and Server-Sent Events were confirmed to stream through nginx
-> unbuffered in real time (an alert delivered mid-stream, not on connection
-> close). The two Dockerfile `go build` steps and the `npm run build` step were
-> run natively and succeed. The images themselves were **not** built here
-> because this sandbox has no container runtime and none is installable without
-> root (rootless Docker needs setuid `newuidmap` and `slirp4netns`). Everything
-> else in this README was verified for real natively — see below.
-
-### Option B — Native (no Docker)
-
-Requires Go 1.22+, Postgres (with the TimescaleDB extension if you want the
-hypertable; it degrades gracefully to a plain table otherwise), and Redis.
-
-```bash
-# point these at your services if they differ from the defaults
-export DATABASE_URL="postgres://lens:lens@127.0.0.1:5432/securitylens?sslmode=disable"
-export REDIS_ADDR="127.0.0.1:6379"
-
-make seed        # generate the synthetic dataset (SEED_LOGS/SEED_DAYS/SEED_SEED)
-make eval        # score every detector against ground truth, print the table
-make run         # start the API + dashboard backend on :8080
-
-# front end
-cd web && npm install && npm run dev    # dev server on :3000, proxies to :8080
-```
+Seeding (`make seed`) replaces database contents. Use it only with an explicit,
+separate synthetic database, then run `make eval` against that database.
 
 Useful targets: `make test` (unit), `make test-integration` (DB-backed
 end-to-end detection test), `make check-label-firewall`, `make vet`, `make web`
@@ -162,15 +154,20 @@ end-to-end detection test), `make check-label-firewall`, `make vet`, `make web`
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `DATABASE_URL` | `postgres://lens:lens@…/securitylens` | Postgres DSN |
+| `DATABASE_URL` | *(required for native server)* | Postgres URL with a password of at least 32 characters; Compose constructs it from `POSTGRES_PASSWORD` |
+| `POSTGRES_PASSWORD` | *(required in Compose)* | Generate 32 random bytes as hex; first database initialization only |
+| `AUTH_OPERATOR_TOKEN` | *(required)* | 64-character random hex token; read, alert updates, and AI actions |
+| `AUTH_VIEWER_TOKEN` | *(empty, disabled)* | Distinct 64-character random hex token; read-only access |
+| `AUTH_COOKIE_SECURE` | `true` | Secure session cookie; `.env.example` explicitly uses `false` for localhost/SSH-tunnel HTTP only |
+| `BIND_ADDR` | `127.0.0.1` | Native API bind address; Compose uses `0.0.0.0` inside its private networks |
 | `REDIS_ADDR` | `127.0.0.1:6379` | Redis address |
 | `PORT` | `8080` | API / dashboard port |
 | `LLM_PROVIDER` | `openai` | Live provider: `openai` or `anthropic` |
 | `OPENAI_API_KEY` | *(empty)* | Backend-only OpenAI API key |
 | `ANTHROPIC_API_KEY` | *(empty)* | Used only with `LLM_PROVIDER=anthropic` |
-| `LLM_MODE` | `auto` | `auto` = live with the selected provider's key, else mock; `mock` always stays offline; `live` requires a key |
+| `LLM_MODE` | `auto` (Compose: `mock`) | `auto` = live with the selected provider's key, else mock; `mock` always stays offline; `live` requires a key |
 | `LLM_MODEL` | *(provider default)* | OpenAI: `gpt-6.1-sol`; Anthropic: `claude-opus-4-8` |
-| `SEED_ON_START` | `false` (`true` in compose) | Seed the dataset on boot if the logs table is empty |
+| `SEED_ON_START` | `false` (also in Compose) | Seed the dataset on boot if the logs table is empty |
 | `SEED_LOGS` / `SEED_DAYS` / `SEED_SEED` | `200000` / `21` / `1` | Synthetic dataset size, span, and RNG seed |
 | `SEED_ANCHOR_NOW` | `false` | End the dataset near "now" (fresh live feed); the evaluator omits this for reproducibility |
 | `SWEEP_INTERVAL` / `DETECT_LAG` / `SWEEP_STEP` | `15s` / `5s` / `10m` | Live sweep cadence, settle lag, and window step |
@@ -194,11 +191,11 @@ LLM_MODEL=gpt-6.1-sol
 LLM_MODE=live
 ```
 
-Then run `docker compose up --build -d`. Compose passes these variables only to
-the backend. For a native run, export the same variables in your shell before
+Then recreate the backend using your pilot Compose project name. Compose passes
+these variables only to the backend. For a native run, export the same variables in your shell before
 `make run`; the Go backend does not load `.env` itself. Do not commit `.env` or put
-the key in a `VITE_*` variable. `GET /api/health` should report `llm_mode: "live"`
-and `llm_model: "gpt-6.1-sol"`; this reports configuration, not API connectivity.
+the key in a `VITE_*` variable. An authenticated `GET /api/health` should report
+`llm_mode: "live"` and `llm_model: "gpt-6.1-sol"`; this reports configuration, not API connectivity.
 Trigger triage on an alert to verify your key, model access, and API billing.
 
 With `LLM_MODE=auto`, a missing selected-provider key uses the deterministic
@@ -320,6 +317,8 @@ See [`NOTES.md`](NOTES.md) for the full tuning history.
 
 ## Testing
 
+- API/config tests cover unauthenticated access, viewer restrictions, session
+  expiry and revocation, CSRF checks, and required startup credentials.
 - `make test` — unit tests for every detector against labelled fixtures, the
   secrets classifier's FP/TP table, baseline construction (successes learned,
   failures never), generator realism invariants, dedup/eval scoring, the mock
@@ -352,14 +351,15 @@ output.
   against simulated HTTP responses. Live model quality and account access still
   require validation with your own API key; no live OpenAI call was made as part
   of this integration change.
-- **Docker not built in this environment.** The Compose stack, Dockerfiles, and
-  nginx config are authored and self-consistent; the nginx config passes
-  `nginx -t` and the SSE-through-nginx behaviour was verified against the running
-  backend. No container runtime is installable without root in this sandbox, so
-  the images were not built here — everything else was verified natively (Go
-  build/vet, full unit + integration tests, the evaluator, a live server smoke
-  test with every endpoint curl'd, a headless-browser pass over the dashboard,
-  and the front-end production build).
+- **Pilot deployment still needs verification.** Compose configuration checks
+  pass, but Docker daemon access is unavailable in this workspace. Images and
+  container network isolation have not been tested here. Authentication and
+  empty-database startup are tested with disposable native Postgres and Redis;
+  these checks do not establish that a staging deployment is secured. Follow the
+  [pilot setup guide](docs/pilot-setup.md) on the intended host.
+- **Shared pilot roles.** Operator and optional viewer tokens provide access
+  checks, with expiring browser sessions. Individual accounts, SSO/MFA, and
+  per-person audit trails are not implemented. Keep the service private.
 - **TimescaleDB optional.** The logs table is a TimescaleDB hypertable when the
   extension is available and a plain table otherwise; the migration branches on
   `pg_extension` and all queries are written to work either way. The Compose

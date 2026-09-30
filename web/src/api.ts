@@ -114,55 +114,96 @@ export interface Health {
   logs: number;
 }
 
-async function j<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status}: ${body.slice(0, 300)}`);
+export interface Session {
+  role: "operator" | "viewer";
+}
+
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
   }
-  return res.json() as Promise<T>;
+}
+
+export const SESSION_INVALIDATED = "securitylens:session-invalidated";
+const pendingRequests = new Set<AbortController>();
+
+// A session change must discard in-flight reads as well as cached results.
+export function cancelSessionRequests() {
+  for (const controller of pendingRequests) controller.abort();
+  pendingRequests.clear();
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const controller = new AbortController();
+  pendingRequests.add(controller);
+  const headers = new Headers(options.headers);
+  if (options.method && options.method !== "GET") {
+    headers.set("X-SecurityLens-Request", "1");
+  }
+  try {
+    const res = await fetch(path, {
+      ...options,
+      headers,
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (res.status === 401) {
+      window.dispatchEvent(new Event(SESSION_INVALIDATED));
+      throw new ApiError(401, "Your session has ended. Sign in to continue.");
+    }
+    if (res.status === 403) {
+      throw new ApiError(403, "Your role does not allow this action.");
+    }
+    if (!res.ok) {
+      const body = await res.text();
+      throw new ApiError(res.status, `${res.status}: ${body.slice(0, 300)}`);
+    }
+    if (res.status === 204) return undefined as T;
+    return await res.json() as T;
+  } finally {
+    pendingRequests.delete(controller);
+  }
 }
 
 export const api = {
-  health: () => fetch("/api/health").then((r) => j<Health>(r)),
-  logs: (limit = 100) =>
-    fetch(`/api/logs?limit=${limit}`).then((r) => j<{ logs: LogEvent[] }>(r)),
-  alerts: (params = "") =>
-    fetch(`/api/alerts?limit=300${params}`).then((r) => j<{ alerts: Alert[] }>(r)),
-  alert: (id: string) =>
-    fetch(`/api/alerts/${id}`).then((r) => j<{ alert: Alert; runbook: Runbook }>(r)),
-  triage: (id: string) =>
-    fetch(`/api/alerts/${id}/triage`, { method: "POST" }).then((r) =>
-      j<{ triage: Triage }>(r),
-    ),
-  investigate: (id: string) =>
-    fetch(`/api/alerts/${id}/investigate`, { method: "POST" }).then((r) =>
-      j<{ investigation: Investigation }>(r),
-    ),
-  setStatus: (id: string, status: string) =>
-    fetch(`/api/alerts/${id}/status`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status }),
-    }).then((r) => j<{ ok: boolean }>(r)),
-  incidents: () =>
-    fetch("/api/incidents").then((r) => j<{ incidents: Incident[] }>(r)),
-  incident: (id: string) =>
-    fetch(`/api/incidents/${id}`).then((r) => j<{ incident: Incident }>(r)),
-  timeline: () =>
-    fetch("/api/timeline").then((r) => j<{ points: TimelinePoint[] }>(r)),
-  metrics: () => fetch("/api/metrics").then((r) => j<Record<string, any>>(r)),
-  evalRuns: () =>
-    fetch("/api/eval").then((r) =>
-      j<{ runs: { id: number; ts: string; dataset: string; result: EvalResult }[] }>(r),
-    ),
-  generateRule: (description: string) =>
-    fetch("/api/rules/generate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ description }),
-    }).then((r) =>
-      j<{ code: string; compile_ok: boolean; compiler_output: string; mock: boolean; model: string }>(r),
-    ),
+  session: () => request<Session>("/api/session"),
+  signIn: (token: string) => request<Session>("/api/session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token }),
+  }),
+  signOut: () => request<void>("/api/session", { method: "DELETE" }),
+  health: () => request<Health>("/api/health"),
+  logs: async (limit = 100) => {
+    const result = await request<{ logs: LogEvent[] | null }>(`/api/logs?limit=${limit}`);
+    return { logs: result.logs ?? [] };
+  },
+  alerts: (params = "") => request<{ alerts: Alert[] }>(`/api/alerts?limit=300${params}`),
+  alert: (id: string) => request<{ alert: Alert; runbook: Runbook }>(`/api/alerts/${id}`),
+  triage: (id: string) => request<{ triage: Triage }>(`/api/alerts/${id}/triage`, { method: "POST" }),
+  investigate: (id: string) => request<{ investigation: Investigation }>(`/api/alerts/${id}/investigate`, { method: "POST" }),
+  setStatus: (id: string, status: string) => request<{ ok: boolean }>(`/api/alerts/${id}/status`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ status }),
+  }),
+  incidents: () => request<{ incidents: Incident[] }>("/api/incidents"),
+  incident: (id: string) => request<{ incident: Incident }>(`/api/incidents/${id}`),
+  timeline: async () => {
+    const result = await request<{ points: TimelinePoint[] | null }>("/api/timeline");
+    return { points: result.points ?? [] };
+  },
+  metrics: () => request<Record<string, any>>("/api/metrics"),
+  evalRuns: () => request<{ runs: { id: number; ts: string; dataset: string; result: EvalResult }[] }>("/api/eval"),
+  generateRule: (description: string) => request<{
+    code: string; compile_ok: boolean; compiler_output: string; mock: boolean; model: string;
+  }>("/api/rules/generate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ description }),
+  }),
 };
 
 export const TYPE_COLORS: Record<string, string> = {
